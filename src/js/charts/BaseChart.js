@@ -1,4 +1,5 @@
 import SvgTip from '../objects/SvgTip';
+import SvgPointer from "../objects/SvgPointer";
 import { $, isElementInViewport, getElementContentWidth, isHidden } from '../utils/dom';
 import { makeSVGContainer, makeSVGDefs, makeSVGGroup, makeText } from '../utils/draw';
 import { BASE_MEASURES, getExtraHeight, getExtraWidth, getTopOffset, getLeftOffset,
@@ -25,6 +26,7 @@ export default class BaseChart {
 
 		this.title = options.title || '';
 		this.type = options.type || '';
+		this.xUnit = options.xUnit || 1;
 
 		this.realData = this.prepareData(options.data);
 		this.data = this.prepareFirstData(this.realData);
@@ -111,6 +113,7 @@ export default class BaseChart {
 		this.makeContainer();
 		this.updateWidth();
 		this.makeTooltip();
+		this.makePointer();
 
 		this.draw(false, true);
 	}
@@ -139,7 +142,17 @@ export default class BaseChart {
 		this.bindTooltip();
 	}
 
+	makePointer() {
+		this.pointer = new SvgPointer({
+			parent: this.container,
+			colors: this.colors
+		});
+		this.bindPointer();
+	}
+
 	bindTooltip() {}
+
+	bindPointer() {}
 
 	draw(onlyWidthChange=false, init=false) {
 		if (onlyWidthChange && isHidden(this.parent)) {

@@ -7,7 +7,7 @@ import { calcChartIntervals, getIntervalSize, getValueRange, getZeroIndex, scale
 import { floatTwo } from '../utils/helpers';
 import { makeOverlay, updateOverlay, legendBar } from '../utils/draw';
 import { getTopOffset, getLeftOffset, MIN_BAR_PERCENT_HEIGHT, BAR_CHART_SPACE_RATIO,
-	LINE_CHART_DOT_SIZE } from '../utils/constants';
+	LINE_CHART_DOT_SIZE, CANDLE_CHART_SPACE_RATIO, MIN_CANDLE_PERCENT_HEIGHT } from '../utils/constants';
 
 export default class AxisChart extends BaseChart {
 	constructor(parent, args) {
@@ -15,6 +15,7 @@ export default class AxisChart extends BaseChart {
 
 		this.barOptions = args.barOptions || {};
 		this.lineOptions = args.lineOptions || {};
+		this.candleOptions = args.candleOptions || {};
 
 		this.type = args.type || 'line';
 		this.init = 1;
@@ -47,17 +48,17 @@ export default class AxisChart extends BaseChart {
 	}
 
 	prepareData(data=this.data) {
-		return dataPrep(data, this.type);
+		return dataPrep(data, this.type, this.xUnit);
 	}
 
 	prepareFirstData(data=this.data) {
-		return zeroDataPrep(data);
+		return zeroDataPrep(data, this.type, this.xUnit);
 	}
 
 	calc(onlyWidthChange = false) {
 		this.calcXPositions();
 		if(!onlyWidthChange) {
-			this.calcYAxisParameters(this.getAllYValues(), this.type === 'line');
+			this.calcYAxisParameters(this.getAllYValues(), true); //minium value  false: 0, true: minium value
 		}
 		this.makeDataByIndex();
 	}
@@ -66,6 +67,7 @@ export default class AxisChart extends BaseChart {
 		let s = this.state;
 		let labels = this.data.labels;
 		s.datasetLength = labels.length;
+		s.xUnit = this.xUnit;
 
 		s.unitWidth = this.width/(s.datasetLength);
 		// Default, as per bar, and mixed. Only line will be a special case
@@ -105,6 +107,7 @@ export default class AxisChart extends BaseChart {
 	calcDatasetPoints() {
 		let s = this.state;
 		let scaleAll = values => values.map(val => scale(val, s.yAxis));
+		let scaleCandles = values => values.map(list => list.map(val => scale(val, s.yAxis)));
 
 		s.datasets = this.data.datasets.map((d, i) => {
 			let values = d.values;
@@ -115,7 +118,7 @@ export default class AxisChart extends BaseChart {
 				chartType: d.chartType,
 
 				values: values,
-				yPositions: scaleAll(values),
+				yPositions: d.chartType === 'candle' ? scaleCandles(values) : scaleAll(values),
 
 				cumulativeYs: cumulativeYs,
 				cumulativeYPos: scaleAll(cumulativeYs),
@@ -132,8 +135,16 @@ export default class AxisChart extends BaseChart {
 		s.yExtremes = new Array(s.datasetLength).fill(9999);
 		s.datasets.map(d => {
 			d.yPositions.map((pos, j) => {
-				if(pos < s.yExtremes[j]) {
-					s.yExtremes[j] = pos;
+				if (d.chartType === 'candle') {
+					if (j % s.xUnit === 0) {
+						if(pos[3] < s.yExtremes[j / s.xUnit]) {
+							s.yExtremes[j / s.xUnit] = pos[3]; //close value selected
+						}
+					}
+				} else {
+					if(pos < s.yExtremes[j]) {
+						s.yExtremes[j] = pos;
+					}
 				}
 			});
 		});
@@ -173,7 +184,7 @@ export default class AxisChart extends BaseChart {
 			});
 		}
 
-		let allValueLists = this.data.datasets.map(d => d[key]);
+		let allValueLists = this.data.datasets.map(d => (d.chartType === 'candle' ? d[key].reduce((total, val) => total.concat(val[1], val[2]), []) : d[key]));//high value selected: 1
 		if(this.data.yMarkers) {
 			allValueLists.push(this.data.yMarkers.map(d => d.value));
 		}
@@ -193,8 +204,8 @@ export default class AxisChart extends BaseChart {
 				{
 					mode: this.config.yAxisMode,
 					width: this.width,
-					shortenNumbers: this.config.shortenYAxisNumbers
-					// pos: 'right'
+					shortenNumbers: this.config.shortenYAxisNumbers,
+					pos: 'right'
 				},
 				function() {
 					return this.state.yAxis;
@@ -231,6 +242,7 @@ export default class AxisChart extends BaseChart {
 
 		let barDatasets = this.state.datasets.filter(d => d.chartType === 'bar');
 		let lineDatasets = this.state.datasets.filter(d => d.chartType === 'line');
+		let candleDatasets = this.state.datasets.filter(d => d.chartType === 'candle');
 
 		let barsConfigs = barDatasets.map(d => {
 			let index = d.index;
@@ -324,6 +336,59 @@ export default class AxisChart extends BaseChart {
 			];
 		});
 
+		let candlesConfigs = candleDatasets.map(d => {
+			let index = d.index;
+			return [
+				'candleGraph' + '-' + d.index,
+				{
+					index: index,
+					color: this.colors[index],
+					stacked: this.candleOptions.stacked,
+
+					// same for all datasets
+					valuesOverPoints: this.config.valuesOverPoints,
+					minHeight: this.height * MIN_CANDLE_PERCENT_HEIGHT,
+				},
+				function() {
+					let s = this.state;
+					let d = s.datasets[index];
+					let stacked = this.candleOptions.stacked;
+
+					let spaceRatio = this.candleOptions.spaceRatio || CANDLE_CHART_SPACE_RATIO;
+					let candlesWidth = s.unitWidth * (1 - spaceRatio);
+					let candleWidth = candlesWidth/(stacked ? 1 : candleDatasets.length * s.xUnit);
+
+					let getUnitXPositions = (x) => (new Array(s.xUnit).fill(0).map((val, index) => x + index * s.unitWidth/s.xUnit - candleWidth/2));
+					let xPositions = s.xAxis.positions.reduce((total, item) => (total.concat(getUnitXPositions(item))), []);
+					if(!stacked) {
+						xPositions = xPositions.map(p => p + candleWidth * index);
+					}
+
+					let labels = new Array(s.datasetLength).fill('');
+					if(this.config.valuesOverPoints) {
+						if(stacked && d.index === s.datasets.length - 1) {
+							labels = d.cumulativeYs;
+						} else {
+							labels = d.values;
+						}
+					}
+
+					let offsets = new Array(s.datasetLength).fill(0);
+					return {
+						xPositions: xPositions,
+						yPositions: d.yPositions,
+						offsets: offsets,
+						// values: d.values,
+						labels: labels,
+
+						zeroLine: s.yAxis.zeroLine,
+						candlesWidth: candlesWidth,
+						candleWidth: candleWidth,
+					};
+				}.bind(this)
+			];
+		});
+
 		let markerConfigs = [
 			[
 				'yMarkers',
@@ -337,7 +402,7 @@ export default class AxisChart extends BaseChart {
 			]
 		];
 
-		componentConfigs = componentConfigs.concat(barsConfigs, lineConfigs, markerConfigs);
+		componentConfigs = componentConfigs.concat(barsConfigs, lineConfigs, candlesConfigs, markerConfigs);
 
 		let optionals = ['yMarkers', 'yRegions'];
 		this.dataUnitComponents = [];
@@ -346,7 +411,7 @@ export default class AxisChart extends BaseChart {
 			.filter(args => !optionals.includes(args[0]) || this.state[args[0]])
 			.map(args => {
 				let component = getComponent(...args);
-				if(args[0].includes('lineGraph') || args[0].includes('barGraph')) {
+				if(args[0].includes('lineGraph') || args[0].includes('barGraph') || args[0].includes('candleGraph')) {
 					this.dataUnitComponents.push(component);
 				}
 				return [args[0], component];
@@ -363,11 +428,11 @@ export default class AxisChart extends BaseChart {
 
 		titles.map((label, index) => {
 			let values = this.state.datasets.map((set, i) => {
-				let value = set.values[index];
+				let value = set.chartType === 'candle' ? set.values[index * s.xUnit][3] : set.values[index]; //close value selected
 				return {
 					title: set.name,
 					value: value,
-					yPos: set.yPositions[index],
+					yPos: set.chartType === 'candle' ? set.yPositions[index * s.xUnit][3] : set.yPositions[index],//close value selected
 					color: this.colors[i],
 					formatted: formatY ? formatY(value) : value,
 				};
@@ -418,6 +483,24 @@ export default class AxisChart extends BaseChart {
 
 			this.tip.showTip();
 		}
+	}
+
+	bindPointer() {
+		this.container.addEventListener('mousemove', (e) => {
+			document.body.style.cursor = "crosshair";
+			let o = getOffset(this.container);
+			let relX = e.pageX - o.left;
+			let relY = e.pageY - o.top;
+			this.mapPointerPosition(relX, relY);
+		});
+	}
+
+	mapPointerPosition(relX, relY) {
+		this.pointer.setValues(
+			relX,
+			relY
+		);
+		this.pointer.showPointer();
 	}
 
 	renderLegend() {

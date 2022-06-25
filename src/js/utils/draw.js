@@ -1,6 +1,6 @@
-import { getBarHeightAndYAttr, truncateString, shortenLargeNumber, getSplineCurvePointsStr } from './draw-utils';
+import { getBarHeightAndYAttr, getCandleAttr, truncateString, shortenLargeNumber, getSplineCurvePointsStr } from './draw-utils';
 import { getStringWidth, isValidNumber } from './helpers';
-import { DOT_OVERLAY_SIZE_INCR, PERCENTAGE_BAR_DEFAULT_DEPTH } from './constants';
+import { DOT_OVERLAY_SIZE_INCR, PERCENTAGE_BAR_DEFAULT_DEPTH, DEFAULT_COLORS } from './constants';
 import { lightenDarkenColor } from './colors';
 
 export const AXIS_TICK_LENGTH = 6;
@@ -374,9 +374,9 @@ export function yLine(y, label, width, options={}) {
 	let x1 = -1 * AXIS_TICK_LENGTH;
 	let x2 = options.mode === 'span' ? width + AXIS_TICK_LENGTH : 0;
 
-	if(options.mode === 'tick' && options.pos === 'right') {
+	if(options.pos === 'right') {
 		x1 = width + AXIS_TICK_LENGTH;
-		x2 = width;
+		x2 = options.mode === 'tick' ? width + AXIS_TICK_LENGTH : 0;
 	}
 
 	// let offset = options.pos === 'left' ? -1 * options.offset : options.offset;
@@ -430,25 +430,41 @@ export function xLine(x, label, height, options={}) {
 
 export function yMarker(y, label, width, options={}) {
 	if(!options.labelPos) options.labelPos = 'right';
-	let x = options.labelPos === 'left' ? LABEL_MARGIN
-		: width - getStringWidth(label, 5) - LABEL_MARGIN;
+	let x = options.labelPos === 'left' ? LABEL_MARGIN : width + LABEL_MARGIN + AXIS_TICK_LENGTH;
+	let x1 = width + AXIS_TICK_LENGTH;
+	let x2 = options.mode === 'tick' ? width + AXIS_TICK_LENGTH : 0;
+	let labelWidth = getStringWidth(label+"00", 4.5) + LABEL_MARGIN;
+
+	let rect = createSVG('rect', {
+		className: ``, // remove class
+		styles: {
+			fill: `#26a69a`,
+			stroke: BASE_LINE_COLOR,
+			'stroke-dasharray': `${labelWidth}, ${FONT_SIZE * 2}`
+		},
+		x: x - LABEL_MARGIN,
+		y: (options.labelPos === 'left' ? -1.8 : -1) * FONT_SIZE + 'px',
+		width: labelWidth,
+		height: FONT_SIZE * 2
+	});
 
 	let labelSvg = createSVG('text', {
-		className: 'chart-label',
+		className: 'chart-label y-marker',
 		x: x,
 		y: 0,
-		dy: (FONT_SIZE / -2) + 'px',
+		dy: (options.labelPos === 'left' ? FONT_SIZE / -2 : FONT_SIZE / 2 - 2) + 'px',
 		'font-size': FONT_SIZE + 'px',
 		'text-anchor': 'start',
 		innerHTML: label+""
 	});
 
-	let line = makeHoriLine(y, '', 0, width, {
+	let line = makeHoriLine(y, '', x1, x2, {
 		stroke: options.stroke || BASE_LINE_COLOR,
 		className: options.className || '',
 		lineType: options.lineType
 	});
 
+	line.appendChild(rect);
 	line.appendChild(labelSvg);
 
 	return line;
@@ -525,6 +541,82 @@ export function datasetBar(x, yTop, width, color, label='', index=0, offset=0, m
 
 	if(!label && !label.length) {
 		return rect;
+	} else {
+		rect.setAttribute('y', 0);
+		rect.setAttribute('x', 0);
+		let text = createSVG('text', {
+			className: 'data-point-value',
+			x: width/2,
+			y: 0,
+			dy: (FONT_SIZE / 2 * -1) + 'px',
+			'font-size': FONT_SIZE + 'px',
+			'text-anchor': 'middle',
+			innerHTML: label
+		});
+
+		let group = createSVG('g', {
+			'data-point-index': index,
+			transform: `translate(${x}, ${y})`
+		});
+		group.appendChild(rect);
+		group.appendChild(text);
+
+		return group;
+	}
+}
+
+export function datasetCandle(x, candleInfo, width, color, label='', index=0, offset=0, meta={}) {
+	let [open, high, low, close, , height] = getCandleAttr(candleInfo, meta.zeroLine);
+	let y = 0;
+	if (open < close) {
+		y = open;
+		color = DEFAULT_COLORS.candle[1];
+	} else {
+		y = close;
+		color = DEFAULT_COLORS.candle[0];
+	}
+	y -= offset;
+
+	if(height === 0) {
+		height = meta.minHeight;
+		y -= meta.minHeight;
+	}
+	// Preprocess numbers to avoid svg building errors
+	if (!isValidNumber(x)) x = 0;
+	if (!isValidNumber(y)) y = 0;
+	if (!isValidNumber(height, true)) height = 0;
+	if (!isValidNumber(width, true)) width = 0;
+
+	let rect = createSVG('rect', {
+		className: `candle mini`,
+		style: `fill: ${color}`,
+		'data-point-index': index,
+		x: 0,
+		y: 0,
+		width: width,
+		height: height
+	});
+
+	let rect_2 = createSVG('rect', {
+		className: `candle mini`,
+		style: `fill: ${color}`,
+		'data-point-index': index,
+		x: width/2,
+		y: high - y,
+		width: 1,
+		height: low - high
+	});
+
+	label += "";
+
+	if(!label && !label.length) {
+		let group = createSVG('g', {
+			'data-point-index': index,
+			transform: `translate(${x}, ${y})`
+		});
+		group.appendChild(rect);
+		group.appendChild(rect_2);
+		return group;
 	} else {
 		rect.setAttribute('y', 0);
 		rect.setAttribute('x', 0);
@@ -635,6 +727,22 @@ export let makeOverlay = {
 		return overlay;
 	},
 
+	'candle': (unit) => {
+		let transformValue;
+		if(unit.nodeName !== 'g') {
+			transformValue = unit.getAttribute('transform');
+			unit = unit.childNodes[0];
+		}
+		let overlay = unit.cloneNode();
+		overlay.style.fill = '#000000';
+		overlay.style.opacity = '0.4';
+
+		if(transformValue) {
+			overlay.setAttribute('transform', transformValue);
+		}
+		return overlay;
+	},
+
 	'dot': (unit) => {
 		let transformValue;
 		if(unit.nodeName !== 'circle') {
@@ -678,6 +786,24 @@ export let updateOverlay = {
 	'bar': (unit, overlay) => {
 		let transformValue;
 		if(unit.nodeName !== 'rect') {
+			transformValue = unit.getAttribute('transform');
+			unit = unit.childNodes[0];
+		}
+		let attributes = ['x', 'y', 'width', 'height'];
+		Object.values(unit.attributes)
+			.filter(attr => attributes.includes(attr.name) && attr.specified)
+			.map(attr => {
+				overlay.setAttribute(attr.name, attr.nodeValue);
+			});
+
+		if(transformValue) {
+			overlay.setAttribute('transform', transformValue);
+		}
+	},
+
+	'candle': (unit, overlay) => {
+		let transformValue;
+		if(unit.nodeName !== 'g') {
 			transformValue = unit.getAttribute('transform');
 			unit = unit.childNodes[0];
 		}

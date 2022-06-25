@@ -1,7 +1,7 @@
 import { fillArray } from '../utils/helpers';
 import { DEFAULT_AXIS_CHART_TYPE, AXIS_DATASET_CHART_TYPES, DEFAULT_CHAR_WIDTH } from '../utils/constants';
 
-export function dataPrep(data, type) {
+export function dataPrep(data, type, xUnit =  1) {
 	data.labels = data.labels || [];
 
 	let datasetLength = data.labels.length;
@@ -9,37 +9,44 @@ export function dataPrep(data, type) {
 	// Datasets
 	let datasets = data.datasets;
 	let zeroArray = new Array(datasetLength).fill(0);
+	let zeroCandleArray = new Array(datasetLength * xUnit).fill([0, 0, 0, 0, 0]);
 	if(!datasets) {
 		// default
 		datasets = [{
-			values: zeroArray
+			values: type === 'candle' ? zeroCandleArray : zeroArray
 		}];
 	}
 
 	datasets.map(d=> {
-		// Set values
-		if(!d.values) {
-			d.values = zeroArray;
-		} else {
-			// Check for non values
-			let vals = d.values;
-			vals = vals.map(val => (!isNaN(val) ? val : 0));
-
-			// Trim or extend
-			if(vals.length > datasetLength) {
-				vals = vals.slice(0, datasetLength);
-			} else {
-				vals = fillArray(vals, datasetLength - vals.length, 0);
-			}
-			d.values = vals;
-		}
-
 		// Set type
 		if(!d.chartType ) {
 			if(!AXIS_DATASET_CHART_TYPES.includes(type)) type = DEFAULT_AXIS_CHART_TYPE;
 			d.chartType = type;
 		}
+		datasetLength = d.chartType === 'candle' ? data.labels.length * xUnit : data.labels.length;
 
+		// Set values
+		if(!d.values) {
+			d.values = d.chartType === 'candle' ? zeroCandleArray : zeroArray;
+		} else {
+			// Check for non values
+			let vals = d.values;
+			if (d.chartType === 'candle') {
+				vals = (vals || []).map(vals => (vals || []).map(val => (!isNaN(val) ? val : 0)));
+			} else {
+				vals = vals.map(val => (!isNaN(val) ? val : 0));
+			}
+
+
+			// Trim or extend
+			if(vals.length > datasetLength) {
+				vals = vals.slice(0, datasetLength);
+			} else {
+				const uintValue = d.chartType === 'candle' ? [0, 0, 0, 0, 0] : 0;
+				vals = fillArray(vals, datasetLength - vals.length, uintValue);
+			}
+			d.values = vals;
+		}
 	});
 
 	// Markers
@@ -57,16 +64,17 @@ export function dataPrep(data, type) {
 	return data;
 }
 
-export function zeroDataPrep(realData) {
+export function zeroDataPrep(realData, type, xUnit = 1) {
 	let datasetLength = realData.labels.length;
 	let zeroArray = new Array(datasetLength).fill(0);
+	let zeroCandleArray = new Array(datasetLength * xUnit).fill([0, 0, 0, 0, 0]);
 
 	let zeroData = {
 		labels: realData.labels.slice(0, -1),
 		datasets: realData.datasets.map(d => {
 			return {
 				name: '',
-				values: zeroArray.slice(0, -1),
+				values: d.chartType === 'candle' ? zeroCandleArray.slice(0, -1) : zeroArray.slice(0, -1),
 				chartType: d.chartType
 			};
 		}),
